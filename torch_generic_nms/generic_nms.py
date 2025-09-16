@@ -3,7 +3,7 @@ import torch
 
 
 def generic_nms(
-    dets: torch.Tensor, scores: torch.Tensor, iou_threshold, use_iou_matrix
+    dets: torch.Tensor, scores: torch.Tensor, iou_threshold: float, use_iou_matrix: bool
 ) -> torch.Tensor:
     from . import _C  # pyre-ignore[21]
 
