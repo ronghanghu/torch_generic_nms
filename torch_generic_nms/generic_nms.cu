@@ -2,8 +2,8 @@
 #include <ATen/AccumulateType.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
-#include <torch/library.h>
 #include <torch/extension.h>
+#include <torch/library.h>
 
 namespace {
 
@@ -15,10 +15,8 @@ constexpr __host__ __device__ inline integer ceil_div(integer n, integer m) {
 int const threadsPerBlock = sizeof(unsigned long long) * 8;
 
 template <typename T>
-__device__ inline bool devIoU(
-    T const* const a,
-    T const* const b,
-    const float threshold) {
+__device__ inline bool
+devIoU(T const* const a, T const* const b, const float threshold) {
   T left = max(a[0], b[0]), right = min(a[2], b[2]);
   T top = max(a[1], b[1]), bottom = min(a[3], b[3]);
   T width = max(right - left, (T)0), height = max(bottom - top, (T)0);
@@ -169,11 +167,22 @@ at::Tensor nms_kernel_ex(
     bool use_iou_matrix) {
   TORCH_CHECK(dets.is_cuda(), "dets must be a CUDA tensor");
   TORCH_CHECK(scores.is_cuda(), "scores must be a CUDA tensor");
-  TORCH_CHECK(dets.dim() == 2, "first argument should be a 2d tensor, got ", dets.dim(), "D");
-  TORCH_CHECK(scores.dim() == 1, "scores should be a 1d tensor, got ", scores.dim(), "D");
-  TORCH_CHECK(dets.size(0) == scores.size(0),
-              "first argument and scores should have same number of elements in dimension 0, got ",
-              dets.size(0), " and ", scores.size(0));
+  TORCH_CHECK(
+      dets.dim() == 2,
+      "first argument should be a 2d tensor, got ",
+      dets.dim(),
+      "D");
+  TORCH_CHECK(
+      scores.dim() == 1,
+      "scores should be a 1d tensor, got ",
+      scores.dim(),
+      "D");
+  TORCH_CHECK(
+      dets.size(0) == scores.size(0),
+      "first argument and scores should have same number of elements in dimension 0, got ",
+      dets.size(0),
+      " and ",
+      scores.size(0));
 
   at::cuda::CUDAGuard device_guard(dets.device());
 
@@ -181,29 +190,43 @@ at::Tensor nms_kernel_ex(
     return at::empty({0}, dets.options().dtype(at::kLong));
   }
 
-  auto order_t = std::get<1>(scores.sort(/*stable=*/true, /*dim=*/0, /* descending=*/true));
+  auto order_t = std::get<1>(
+      scores.sort(/*stable=*/true, /*dim=*/0, /* descending=*/true));
   int dets_num = dets.size(0);
   const int col_blocks = ceil_div(dets_num, threadsPerBlock);
 
-  at::Tensor mask = at::empty({dets_num * col_blocks}, dets.options().dtype(at::kLong));
+  at::Tensor mask =
+      at::empty({dets_num * col_blocks}, dets.options().dtype(at::kLong));
   dim3 blocks(col_blocks, col_blocks);
   dim3 threads(threadsPerBlock);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   if (use_iou_matrix) {
-    TORCH_CHECK(dets.size(0) == dets.size(1), "when use_iou_matrix=True, first argument must be [N,N]");
-    auto sorted_iou = dets.index_select(0, order_t).index_select(1, order_t).contiguous();
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(sorted_iou.scalar_type(), "nms_kernel_iou_ex", [&] {
-      nms_kernel_iou_impl<scalar_t><<<blocks, threads, 0, stream>>>(
-          dets_num, iou_threshold, sorted_iou.data_ptr<scalar_t>(), (unsigned long long*)mask.data_ptr<int64_t>());
-    });
+    TORCH_CHECK(
+        dets.size(0) == dets.size(1),
+        "when use_iou_matrix=True, first argument must be [N,N]");
+    auto sorted_iou =
+        dets.index_select(0, order_t).index_select(1, order_t).contiguous();
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        sorted_iou.scalar_type(), "nms_kernel_iou_ex", [&] {
+          nms_kernel_iou_impl<scalar_t><<<blocks, threads, 0, stream>>>(
+              dets_num,
+              iou_threshold,
+              sorted_iou.data_ptr<scalar_t>(),
+              (unsigned long long*)mask.data_ptr<int64_t>());
+        });
   } else {
-    TORCH_CHECK(dets.size(1) == 4, "when use_iou_matrix=False, boxes must be [N,4]");
+    TORCH_CHECK(
+        dets.size(1) == 4, "when use_iou_matrix=False, boxes must be [N,4]");
     auto dets_sorted = dets.index_select(0, order_t).contiguous();
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(dets_sorted.scalar_type(), "nms_kernel_ex", [&] {
-      nms_kernel_impl<scalar_t><<<blocks, threads, 0, stream>>>(
-          dets_num, iou_threshold, dets_sorted.data_ptr<scalar_t>(), (unsigned long long*)mask.data_ptr<int64_t>());
-    });
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        dets_sorted.scalar_type(), "nms_kernel_ex", [&] {
+          nms_kernel_impl<scalar_t><<<blocks, threads, 0, stream>>>(
+              dets_num,
+              iou_threshold,
+              dets_sorted.data_ptr<scalar_t>(),
+              (unsigned long long*)mask.data_ptr<int64_t>());
+        });
   }
 
   at::Tensor keep =
@@ -212,7 +235,10 @@ at::Tensor nms_kernel_ex(
       1,
       min(col_blocks, threadsPerBlock),
       col_blocks * sizeof(unsigned long long),
-      stream>>>(keep.data_ptr<bool>(), (unsigned long long*)mask.data_ptr<int64_t>(), dets_num);
+      stream>>>(
+      keep.data_ptr<bool>(),
+      (unsigned long long*)mask.data_ptr<int64_t>(),
+      dets_num);
 
   AT_CUDA_CHECK(cudaGetLastError());
   return order_t.masked_select(keep);
@@ -227,11 +253,22 @@ at::Tensor generic_nms(
     bool use_iou_matrix) {
   TORCH_CHECK(dets.is_cuda(), "dets must be a CUDA tensor");
   TORCH_CHECK(scores.is_cuda(), "scores must be a CUDA tensor");
-  TORCH_CHECK(dets.dim() == 2, "first argument should be a 2d tensor, got ", dets.dim(), "D");
-  TORCH_CHECK(scores.dim() == 1, "scores should be a 1d tensor, got ", scores.dim(), "D");
-  TORCH_CHECK(dets.size(0) == scores.size(0),
-              "first argument and scores should have same number of elements in dimension 0, got ",
-              dets.size(0), " and ", scores.size(0));
+  TORCH_CHECK(
+      dets.dim() == 2,
+      "first argument should be a 2d tensor, got ",
+      dets.dim(),
+      "D");
+  TORCH_CHECK(
+      scores.dim() == 1,
+      "scores should be a 1d tensor, got ",
+      scores.dim(),
+      "D");
+  TORCH_CHECK(
+      dets.size(0) == scores.size(0),
+      "first argument and scores should have same number of elements in dimension 0, got ",
+      dets.size(0),
+      " and ",
+      scores.size(0));
 
   at::cuda::CUDAGuard device_guard(dets.device());
 
@@ -239,29 +276,43 @@ at::Tensor generic_nms(
     return at::empty({0}, dets.options().dtype(at::kLong));
   }
 
-  auto order_t = std::get<1>(scores.sort(/*stable=*/true, /*dim=*/0, /* descending=*/true));
+  auto order_t = std::get<1>(
+      scores.sort(/*stable=*/true, /*dim=*/0, /* descending=*/true));
   int dets_num = dets.size(0);
   const int col_blocks = ceil_div(dets_num, threadsPerBlock);
 
-  at::Tensor mask = at::empty({dets_num * col_blocks}, dets.options().dtype(at::kLong));
+  at::Tensor mask =
+      at::empty({dets_num * col_blocks}, dets.options().dtype(at::kLong));
   dim3 blocks(col_blocks, col_blocks);
   dim3 threads(threadsPerBlock);
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
 
   if (use_iou_matrix) {
-    TORCH_CHECK(dets.size(0) == dets.size(1), "when use_iou_matrix=True, first argument must be [N,N]");
-    auto sorted_iou = dets.index_select(0, order_t).index_select(1, order_t).contiguous();
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(sorted_iou.scalar_type(), "nms_kernel_iou_ex", [&] {
-      nms_kernel_iou_impl<scalar_t><<<blocks, threads, 0, stream>>>(
-          dets_num, iou_threshold, sorted_iou.data_ptr<scalar_t>(), (unsigned long long*)mask.data_ptr<int64_t>());
-    });
+    TORCH_CHECK(
+        dets.size(0) == dets.size(1),
+        "when use_iou_matrix=True, first argument must be [N,N]");
+    auto sorted_iou =
+        dets.index_select(0, order_t).index_select(1, order_t).contiguous();
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        sorted_iou.scalar_type(), "nms_kernel_iou_ex", [&] {
+          nms_kernel_iou_impl<scalar_t><<<blocks, threads, 0, stream>>>(
+              dets_num,
+              iou_threshold,
+              sorted_iou.data_ptr<scalar_t>(),
+              (unsigned long long*)mask.data_ptr<int64_t>());
+        });
   } else {
-    TORCH_CHECK(dets.size(1) == 4, "when use_iou_matrix=False, boxes must be [N,4]");
+    TORCH_CHECK(
+        dets.size(1) == 4, "when use_iou_matrix=False, boxes must be [N,4]");
     auto dets_sorted = dets.index_select(0, order_t).contiguous();
-    AT_DISPATCH_FLOATING_TYPES_AND_HALF(dets_sorted.scalar_type(), "nms_kernel_ex", [&] {
-      nms_kernel_impl<scalar_t><<<blocks, threads, 0, stream>>>(
-          dets_num, iou_threshold, dets_sorted.data_ptr<scalar_t>(), (unsigned long long*)mask.data_ptr<int64_t>());
-    });
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+        dets_sorted.scalar_type(), "nms_kernel_ex", [&] {
+          nms_kernel_impl<scalar_t><<<blocks, threads, 0, stream>>>(
+              dets_num,
+              iou_threshold,
+              dets_sorted.data_ptr<scalar_t>(),
+              (unsigned long long*)mask.data_ptr<int64_t>());
+        });
   }
 
   at::Tensor keep =
@@ -270,7 +321,10 @@ at::Tensor generic_nms(
       1,
       min(col_blocks, threadsPerBlock),
       col_blocks * sizeof(unsigned long long),
-      stream>>>(keep.data_ptr<bool>(), (unsigned long long*)mask.data_ptr<int64_t>(), dets_num);
+      stream>>>(
+      keep.data_ptr<bool>(),
+      (unsigned long long*)mask.data_ptr<int64_t>(),
+      dets_num);
 
   AT_CUDA_CHECK(cudaGetLastError());
   return order_t.masked_select(keep);
